@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meal Planner AI</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <h1>🍽️ Meal Planner</h1>
+            <nav class="tabs">
+                <button class="tab-btn active" onclick="openTab('products')">Produkty</button>
+                <button class="tab-btn" onclick="openTab('suggestions')">Sugestie AI</button>
+                <button class="tab-btn" onclick="openTab('shopping')">Lista Zakupów</button>
+                <button class="tab-btn" onclick="openTab('settings')">Ustawienia</button>
+            </nav>
+        </header>
+
+        <main>
+            <!-- SECTION: PRODUKTY -->
+            <section id="products" class="tab-content active">
+                <div class="section-header">
+                    <h2>Twoje Produkty</h2>
+                    <button class="btn-primary" onclick="toggleAddProductForm()">+ Dodaj Produkt</button>
+                </div>
+
+                <div id="addProductForm" class="hidden form-card">
+                    <h3>Dodaj nowy produkt</h3>
+                    <form onsubmit="handleAddProduct(event)">
+                        <div class="form-group">
+                            <label>Nazwa:</label>
+                            <input type="text" name="name" required>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Ilość:</label>
+                                <input type="number" name="quantity" step="0.1" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Jednostka:</label>
+                                <select name="unit">
+                                    <option value="szt">szt</option>
+                                    <option value="kg">kg</option>
+                                    <option value="g">g</option>
+                                    <option value="l">l</option>
+                                    <option value="ml">ml</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Data ważności:</label>
+                            <input type="date" name="expiry_date">
+                        </div>
+                        <button type="submit" class="btn-submit">Dodaj</button>
+                    </form>
+                </div>
+
+                <div id="productsView">
+                    <!-- Category Grid View -->
+                    <div id="categoryGrid" class="category-grid">
+                        <p class="loading-text">Ładowanie kategorii...</p>
+                    </div>
+                </div>
+
+                <!-- Modal for Category Details -->
+                <div id="categoryModal" class="modal-overlay hidden" onclick="closeModal(event)">
+                    <div class="modal-content" onclick="event.stopPropagation()">
+                        <div class="modal-header">
+                            <h2 id="modalTitle">Kategoria</h2>
+                            <button class="close-btn" onclick="closeModal(event)">&times;</button>
+                        </div>
+                        <div class="modal-body" id="modalList">
+                            <!-- Products list will go here -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SECTION: SUGESTIE AI -->
+            <section id="suggestions" class="tab-content">
+                <h2>Sugestie AI 🧠</h2>
+                <div class="actions-panel">
+                    <button class="btn-ai" onclick="getSuggestion('meal')">💡 Zasugeruj Posiłek</button>
+                    <button class="btn-ai" onclick="getSuggestion('menu')">📅 Jadłospis (7 dni)</button>
+                    <button class="btn-ai" onclick="getSuggestion('shopping')">🛒 Lista Uzupełniająca</button>
+                </div>
+                <div id="aiResult" class="ai-output hidden">
+                    <h3>Odpowiedź Asystenta:</h3>
+                    <div id="aiText" class="markdown-body"></div>
+                </div>
+            </section>
+
+            <!-- SECTION: LISTA ZAKUPÓW -->
+            <section id="shopping" class="tab-content">
+                <h2>Lista Zakupów</h2>
+                <div class="coming-soon">
+                    <p>Tutaj znajdzie się Twoja lista zakupów oraz opcja generowania jej przez AI w sekcji Sugestie.</p>
+                </div>
+                <!-- Placeholder for future implementation -->
+            </section>
+
+            <!-- SECTION: USTAWIENIA -->
+            <section id="settings" class="tab-content">
+                <h2>Ustawienia Aplikacji ⚙️</h2>
+
+                <div class="settings-grid">
+                    <!-- Database Settings -->
+                    <div class="settings-card">
+                        <h3>🗄️ Baza Danych (PostgreSQL)</h3>
+                        <form id="dbForm">
+                            <div class="form-group">
+                                <label>Host:</label>
+                                <input type="text" id="dbHost">
+                            </div>
+                            <div class="form-group">
+                                <label>Port:</label>
+                                <input type="text" id="dbPort">
+                            </div>
+                            <div class="form-group">
+                                <label>Baza:</label>
+                                <input type="text" id="dbName">
+                            </div>
+                            <div class="form-group">
+                                <label>Użytkownik:</label>
+                                <input type="text" id="dbUser">
+                            </div>
+                            <div class="form-group">
+                                <label>Hasło (pozostaw puste, aby nie zmieniać):</label>
+                                <input type="password" id="dbPass">
+                            </div>
+                            <button type="button" class="btn-test" onclick="testDB()">🔍 Testuj Bazę</button>
+                            <div id="dbStatus" class="status-message"></div>
+                        </form>
+                    </div>
+
+                    <!-- Ollama Settings -->
+                    <div class="settings-card">
+                        <h3>🤖 Ollama (AI)</h3>
+                        <form id="ollamaForm">
+                            <div class="form-group">
+                                <label>Host:</label>
+                                <input type="text" id="ollamaHost">
+                            </div>
+                            <div class="form-group">
+                                <label>Model:</label>
+                                <div class="select-wrapper">
+                                    <select id="ollamaModel">
+                                        <option value="">⏳ Ładowanie modeli...</option>
+                                    </select>
+                                    <span class="refresh-icon" onclick="loadOllamaModels()"
+                                        title="Odśwież listę">🔄</span>
+                                </div>
+                            </div>
+                            <button type="button" class="btn-test" onclick="testOllama()">🔗 Testuj Ollama</button>
+                            <div id="ollamaStatus" class="status-message"></div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="save-actions">
+                    <button class="btn-primary" onclick="saveSettings()">💾 Zapisz Ustawienia</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>
