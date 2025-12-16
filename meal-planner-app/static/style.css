@@ -440,3 +440,219 @@ select:focus {
     cursor: pointer;
     font-size: 1.2rem;
 }
+
+/* Calendar Styles */
+.calendar-section {
+    background: white;
+    padding: 20px;
+    border-radius: 15px;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+    margin-top: 20px;
+}
+
+.calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.calendar-header h3 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--primary);
+}
+
+.calendar-header button {
+    background: var(--bg);
+    border: none;
+    padding: 5px 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--text);
+}
+
+.calendar-header button:hover {
+    background: var(--secondary);
+    color: white;
+}
+
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+}
+
+.cal-day-header {
+    text-align: center;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding-bottom: 5px;
+}
+
+.cal-day {
+    aspect-ratio: 1;
+    background: #f8f9fa;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    border: 1px solid transparent;
+}
+
+.cal-day:hover {
+    background: #e9ecef;
+}
+
+.cal-day.empty {
+    background: transparent;
+    cursor: default;
+}
+
+/* Shopping Day Indicator */
+/* Shopping Day Indicator */
+.cal-day.has-receipt {
+    background: #e3f2fd;
+    /* Light blue background for better contrast */
+    border: 1px solid #90caf9;
+    color: var(--text);
+    justify-content: flex-start;
+    /* Align content to top */
+    padding-top: 5px;
+    font-size: 0.8rem;
+    overflow: hidden;
+}
+
+.cal-day.has-receipt:hover {
+    background: #bbdefb;
+    transform: scale(1.05);
+    z-index: 10;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.receipt-label {
+    background-color: var(--success);
+    color: white;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.7rem;
+    width: 90%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+    text-align: center;
+}
+
+.receipt-more {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    margin-top: 1px;
+}
+
+/* Receipt View in Modal */
+.receipt-view {
+    font-family: 'Courier New', monospace;
+    /* Receipt-like font */
+}
+
+.r-header {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.r-header h3 {
+    margin: 5px 0;
+    text-transform: uppercase;
+}
+
+.r-header span {
+    font-size: 0.9rem;
+    color: #666;
+}
+
+.r-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.r-table th {
+    text-align: left;
+    border-bottom: 1px dashed #ccc;
+    padding: 5px 0;
+}
+
+.r-table td {
+    padding: 5px 0;
+}
+
+.r-table tfoot td {
+    border-top: 1px dashed #ccc;
+    padding-top: 10px;
+    font-size: 1.1rem;
+}
+
+.btn-secondary {
+    background: var(--text-muted);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 15px;
+    width: 100%;
+}
+
+/* Sub Tabs */
+.sub-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    background: #f1f2f6;
+    padding: 5px;
+    border-radius: 25px;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.sub-tab-btn {
+    border: none;
+    background: transparent;
+    padding: 8px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.sub-tab-btn.active {
+    background: white;
+    color: var(--primary);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.stat-content {
+    animation: fadeIn 0.3s ease;
+}
+
+.chart-wrapper.single-chart {
+    max-width: 600px;
+    margin: 20px auto;
+}
+
+.chart-wrapper.full-width {
+    width: 100%;
+    margin-top: 20px;
+}

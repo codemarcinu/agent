@@ -27,7 +27,7 @@ class Product(db.Model):
     
     id = db.Column(db.BigInteger, primary_key=True)
     name = db.Column('produkt', db.String(200))
-    category = db.Column('kategoria', db.String(100))
+    category = db.Column('produkt_kategoria', db.String(100))
     quantity = db.Column('ilosc', db.Numeric)
     price = db.Column('cena_jedn', db.Numeric)
     expiry_date = db.Column('data_waznosci', db.Date)
@@ -35,11 +35,15 @@ class Product(db.Model):
     is_frozen = db.Column('czy_mrozonka', db.Boolean, default=False)
     shop = db.Column('sklep', db.String(100))
     purchase_date = db.Column('data_zakupow', db.Date)
-    
-    shop = db.Column('sklep', db.String(100))
-    purchase_date = db.Column('data_zakupow', db.Date)
-    unit = db.Column('unit', db.String(20), default='szt')
+    unit = db.Column('jednostka', db.String(20), default='szt')
     created_at = db.Column('created_at', db.DateTime, default=datetime.utcnow)
+    paragon_id = db.Column(db.Integer, nullable=True)
+    lp = db.Column(db.Integer, nullable=True)
+    
+    # New columns
+    kod_produktu = db.Column(db.String(100))
+    vat_proc = db.Column(db.Integer)
+    suma_brutto = db.Column(db.Numeric(10,2))
 
     def to_dict(self):
         return {
@@ -53,7 +57,12 @@ class Product(db.Model):
             'expiry_date': self.expiry_date.isoformat() if self.expiry_date else None,
             'available': self.available,
             'is_frozen': bool(self.is_frozen),
-            'shop': self.shop
+            'shop': self.shop,
+            'paragon_id': self.paragon_id,
+            'lp': self.lp,
+            'kod_produktu': self.kod_produktu,
+            'vat_proc': self.vat_proc,
+            'suma_brutto': float(self.suma_brutto) if self.suma_brutto else 0.0
         }
 
 class Meal(db.Model):
@@ -115,6 +124,8 @@ class PurchaseHistory(db.Model):
     price = db.Column(db.Numeric)
     shop = db.Column(db.String(100))
     category = db.Column(db.String(100))
+    paragon_id = db.Column(db.Integer, nullable=True)
+    product_name = db.Column(db.String(200))
 
     def to_dict(self):
         return {
@@ -124,7 +135,8 @@ class PurchaseHistory(db.Model):
             'quantity': float(self.quantity) if self.quantity else 0,
             'price': float(self.price) if self.price else 0,
             'shop': self.shop,
-            'category': self.category
+            'category': self.category,
+            'product_name': self.product_name
         }
 
 class ProductUsage(db.Model):
@@ -141,6 +153,25 @@ class ProductUsage(db.Model):
             'product_id': self.product_id,
             'used_date': self.used_date.isoformat(),
             'used_amount': float(self.used_amount) if self.used_amount else 0
+        }
+
+class Receipt(db.Model):
+    __tablename__ = 'paragony'
+    id = db.Column(db.Integer, primary_key=True)
+    sklep = db.Column(db.String(100))
+    data_zakupu = db.Column(db.Date)
+    suma_total = db.Column(db.Numeric(10, 2))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'sklep': self.sklep,
+            'data_zakupu': self.data_zakupu.isoformat() if self.data_zakupu else None,
+            'suma_total': float(self.suma_total) if self.suma_total else 0.0,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
 # --- Helper Functions ---
@@ -493,15 +524,93 @@ def get_statistics():
          
         monthly_data = [{'month': m[0], 'total': float(m[1]) if m[1] else 0} for m in monthly_spend]
 
+        # 6. Avg Basket Value
+        avg_basket = db.session.query(func.avg(Receipt.suma_total)).scalar() or 0
+
         return jsonify({
             'total_spend': float(total_spend),
             'total_items': total_count,
             'available_items': available_count,
             'top_categories': categories_data,
-            'monthly_spend': monthly_data
+            'monthly_spend': monthly_data,
+            'avg_basket': float(avg_basket)
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/receipts', methods=['GET', 'POST'])
+def handle_receipts():
+    if request.method == 'GET':
+        receipts = Receipt.query.order_by(Receipt.data_zakupu.desc()).limit(20).all()
+        return jsonify([r.to_dict() for r in receipts])
+        
+    if request.method == 'POST':
+        data = request.json
+        try:
+            # Create Receipt
+            receipt = Receipt(
+                sklep=data.get('shop', 'Nieznany'),
+                data_zakupu=datetime.strptime(data.get('date', datetime.now().strftime('%Y-%m-%d')), '%Y-%m-%d').date(),
+                suma_total=0 # Will calc
+            )
+            db.session.add(receipt)
+            db.session.flush() # Get ID
+            
+            total = 0
+            
+            # Create products linked to receipt
+            for item in data.get('items', []):
+                price = float(item.get('price', 0))
+                qty = float(item.get('quantity', 1))
+                total += price * qty
+                
+                new_product = Product(
+                    name=item['name'],
+                    category=item.get('category'),
+                    quantity=qty,
+                    price=price,
+                    unit=item.get('unit', 'szt'),
+                    expiry_date=datetime.strptime(item['expiry_date'], '%Y-%m-%d').date() if item.get('expiry_date') else None,
+                    available='TAK',
+                    shop=receipt.sklep,
+                    purchase_date=receipt.data_zakupu,
+                    paragon_id=receipt.id
+                )
+                db.session.add(new_product)
+                
+                # Also add to history immediately
+                history = PurchaseHistory(
+                    product_id=None, # It's new, we don't have ID yet, but after commit we can. Or just loose coupling.
+                    # Using loose coupling for history table as it is a log
+                    purchase_date=receipt.data_zakupu,
+                    quantity=qty,
+                    price=price,
+                    shop=receipt.sklep,
+                    category=item.get('category'),
+                    paragon_id=receipt.id,
+                    product_name=item['name']
+                )
+                db.session.add(history)
+
+            receipt.suma_total = total
+            db.session.commit()
+            
+            return jsonify({'status': 'OK', 'receipt': receipt.to_dict()}), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+@app.route('/api/receipts/<int:id>', methods=['GET'])
+def get_receipt(id):
+    receipt = Receipt.query.get_or_404(id)
+    # Get products for this receipt from history (as they might be deleted from active products)
+    products = PurchaseHistory.query.filter_by(paragon_id=id).all()
+    
+    return jsonify({
+        'receipt': receipt.to_dict(),
+        'items': [p.to_dict() for p in products]
+    })
 
 @app.route('/api/preferences', methods=['GET', 'POST'])
 def handle_preferences():

@@ -486,6 +486,8 @@ async function loadPreferences() {
 
 // --- Statistics ---
 let charts = {};
+let currentCalendarDate = new Date();
+let receiptCache = {}; // Cache receipt dates for calendar
 
 async function loadStatistics() {
     try {
@@ -496,52 +498,267 @@ async function loadStatistics() {
         document.getElementById('totalSpend').textContent = (data.total_spend || 0).toFixed(2) + ' PLN';
         document.getElementById('totalItems').textContent = data.total_items;
         document.getElementById('itemsRatio').textContent = `${data.available_items} / ${(data.total_items - data.available_items)}`;
+        document.getElementById('avgBasket').textContent = (data.avg_basket || 0).toFixed(2) + ' PLN';
 
         renderCharts(data);
+        loadCalendarReceipts(); // Fetch receipts for calendar
     } catch (e) {
         console.error(e);
     }
 }
 
+// --- Calendar Logic ---
+async function loadCalendarReceipts() {
+    try {
+        // Fetch all receipts to map them on calendar
+        // Ideally we should fetch by month range, but for now fetch last 50
+        const res = await fetch(`${API_URL}/receipts`);
+        const receipts = await res.json();
+
+        receiptCache = {};
+        receipts.forEach(r => {
+            const date = r.data_zakupu; // YYYY-MM-DD
+            if (!receiptCache[date]) receiptCache[date] = [];
+            receiptCache[date].push(r);
+        });
+
+        renderCalendar();
+    } catch (e) {
+        console.error("Calendar fetch error", e);
+    }
+}
+
+function renderCalendar() {
+    const grid = document.getElementById('calendar');
+    grid.innerHTML = '';
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+
+    // Update Header
+    const monthNames = ["Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"];
+    document.getElementById('calendarMonth').textContent = `${monthNames[month]} ${year}`;
+
+    // Logic for days
+    const firstDay = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon...
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // Adjust for Monday start (0=Mon, 6=Sun)
+    let startOffset = firstDay === 0 ? 6 : firstDay - 1;
+
+    // Headers (Mon-Sun)
+    const days = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'];
+    days.forEach(d => {
+        const dh = document.createElement('div');
+        dh.className = 'cal-day-header';
+        dh.textContent = d;
+        grid.appendChild(dh);
+    });
+
+    // Empty slots
+    for (let i = 0; i < startOffset; i++) {
+        const empty = document.createElement('div');
+        empty.className = 'cal-day empty';
+        grid.appendChild(empty);
+    }
+
+    // Days
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dayCell = document.createElement('div');
+        dayCell.className = 'cal-day';
+        dayCell.textContent = d;
+
+        // Check for receipts
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        if (receiptCache[dateStr]) {
+            dayCell.classList.add('has-receipt');
+            const receipts = receiptCache[dateStr];
+
+            // Indicator
+            // Show up to 3 receipts as labels
+            receipts.slice(0, 3).forEach(r => {
+                const label = document.createElement('div');
+                label.className = 'receipt-label';
+                label.textContent = r.sklep;
+                label.title = `${r.sklep}: ${r.suma_total.toFixed(2)} PLN`;
+                dayCell.appendChild(label);
+            });
+
+            // If more than 3, show count
+            if (receipts.length > 3) {
+                const more = document.createElement('div');
+                more.className = 'receipt-more';
+                more.textContent = `+${receipts.length - 3} więcej`;
+                dayCell.appendChild(more);
+            }
+
+            // Total amount hint for the whole day
+            const total = receipts.reduce((sum, r) => sum + r.suma_total, 0);
+            dayCell.setAttribute('title', `Suma dnia: ${total.toFixed(2)} PLN`);
+
+            dayCell.onclick = () => openReceiptListModal(dateStr, receipts);
+        }
+
+        grid.appendChild(dayCell);
+    }
+}
+
+function changeMonth(delta) {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+    renderCalendar();
+}
+
+// --- Receipt Modal ---
+function openReceiptListModal(date, receipts) {
+    const modal = document.getElementById('receiptModal');
+    const details = document.getElementById('receiptDetails');
+    modal.classList.remove('hidden');
+
+    if (receipts.length === 1) {
+        // Show detail directly
+        loadReceiptDetail(receipts[0].id);
+    } else {
+        // Show list to choose
+        let html = `<h3>Paragony z dnia ${date}:</h3><ul>`;
+        receipts.forEach(r => {
+            html += `<li><button class="btn-text" onclick="loadReceiptDetail(${r.id})">${r.sklep} - ${r.suma_total} PLN</button></li>`;
+        });
+        html += '</ul>';
+        details.innerHTML = html;
+    }
+}
+
+async function loadReceiptDetail(id) {
+    const details = document.getElementById('receiptDetails');
+    details.innerHTML = '<p>Ładowanie szczegółów...</p>';
+
+    try {
+        const res = await fetch(`${API_URL}/receipts/${id}`);
+        const data = await res.json();
+        const r = data.receipt;
+
+        let html = `
+            <div class="receipt-view">
+                <div class="r-header">
+                    <h3>${r.sklep}</h3>
+                    <span>${r.data_zakupu}</span>
+                </div>
+                <hr>
+                <table class="r-table">
+                    <thead><tr><th>Produkt</th><th>Ilość</th><th>Cena</th><th>Suma</th></tr></thead>
+                    <tbody>
+        `;
+
+        data.items.forEach(item => {
+            html += `
+                <tr>
+                    <td>${item.product_name || item.category || 'Produkt'}</td> 
+                    <td>${item.quantity}</td>
+                    <td>${item.price.toFixed(2)}</td>
+                    <td>${(item.quantity * item.price).toFixed(2)}</td>
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="3"><strong>SUMA</strong></td>
+                            <td><strong>${r.suma_total.toFixed(2)} PLN</strong></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <button class="btn-secondary" onclick="document.getElementById('receiptModal').classList.add('hidden')">Zamknij</button>
+        `;
+
+        details.innerHTML = html;
+    } catch (e) {
+        details.innerHTML = '<p class="error">Błąd ładowania paragonu.</p>';
+    }
+}
+
+function closeReceiptModal(e) {
+    if (e) e.stopPropagation();
+    document.getElementById('receiptModal').classList.add('hidden');
+}
+
 function renderCharts(data) {
     // Categories Chart
-    const ctxCat = document.getElementById('categoriesChart').getContext('2d');
-
-    if (charts.categories) charts.categories.destroy();
-
-    charts.categories = new Chart(ctxCat, {
-        type: 'doughnut',
-        data: {
-            labels: data.top_categories.map(c => c.name),
-            datasets: [{
-                data: data.top_categories.map(c => c.count),
-                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
-            }]
-        }
-    });
+    // Ensure the canvas exists in current DOM
+    const ctxCatCanvas = document.getElementById('categoriesChart');
+    if (ctxCatCanvas) {
+        if (charts.categories) charts.categories.destroy();
+        charts.categories = new Chart(ctxCatCanvas.getContext('2d'), {
+            type: 'doughnut',
+            data: {
+                labels: data.top_categories.map(c => c.name),
+                datasets: [{
+                    data: data.top_categories.map(c => c.count),
+                    backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
+                }]
+            }
+        });
+    }
 
     // Trends Chart (Monthly Spend)
-    const ctxTrend = document.getElementById('trendsChart').getContext('2d');
-
-    if (charts.trends) charts.trends.destroy();
-
-    charts.trends = new Chart(ctxTrend, {
-        type: 'bar',
-        data: {
-            labels: data.monthly_spend.map(m => m.month),
-            datasets: [{
-                label: 'Wydatki (PLN)',
-                data: data.monthly_spend.map(m => m.total),
-                backgroundColor: '#36A2EB'
-            }]
-        },
-        options: {
-            scales: {
-                y: { beginAtZero: true }
+    const ctxTrendCanvas = document.getElementById('trendsChart');
+    if (ctxTrendCanvas) {
+        if (charts.trends) charts.trends.destroy();
+        charts.trends = new Chart(ctxTrendCanvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: data.monthly_spend.map(m => m.month),
+                datasets: [{
+                    label: 'Wydatki (PLN)',
+                    data: data.monthly_spend.map(m => m.total),
+                    backgroundColor: '#36A2EB'
+                }]
+            },
+            options: {
+                scales: {
+                    y: { beginAtZero: true }
+                }
             }
-        }
-    });
+        });
+    }
 }
+
+// Sub-tabs logic
+function switchStatTab(tabName) {
+    // Hide all contents
+    ['dashboard', 'trends', 'calendar'].forEach(t => {
+        document.getElementById(`stat-${t}`).classList.add('hidden');
+        document.getElementById(`stat-${t}`).classList.remove('active');
+    });
+
+    // Show selected
+    document.getElementById(`stat-${tabName}`).classList.remove('hidden');
+    document.getElementById(`stat-${tabName}`).classList.add('active');
+
+    // Update buttons
+    const btns = document.querySelectorAll('.sub-tab-btn');
+    btns.forEach(b => b.classList.remove('active'));
+    // Find button with matching onclick
+    // Simple way: iterate and check text or add ID. 
+    // Let's assume order matches or click event finds target.
+    // Better: pass event or select by index. 
+    // Since we used onclick="switchStatTab('xxx')", we can just manually set active class on click target 
+    // But here we don't have event. Let's fix in HTML or query selectors.
+
+    // Hacky but simple: Select button by onclick attribute text
+    const targetBtn = document.querySelector(`.sub-tab-btn[onclick="switchStatTab('${tabName}')"]`);
+    if (targetBtn) targetBtn.classList.add('active');
+
+    // Re-render charts if hidden canvas causes issues (Chart.js sometimes needs visible canvas)
+    // No, we loaded data already. We might need to resize.
+}
+
+// Ensure first tab is active on load
+// Called by openTab('statistics') ? 
+// We should probably init sub-tab when main tab opens.
+
 
 function exportReport() {
     window.print();
