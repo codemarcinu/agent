@@ -46,6 +46,9 @@ function openTab(tabName) {
         loadProducts();
     } else if (tabName === 'settings') {
         loadSettings();
+        loadPreferences();
+    } else if (tabName === 'statistics') {
+        loadStatistics();
     }
 }
 
@@ -125,6 +128,9 @@ function openCategoryModal(catName, products) {
                 <span class="p-qty">${p.quantity} ${p.unit} &bull; ${p.shop || ''}</span>
             </div>
             <div class="p-actions">
+                <input type="number" class="qty-input-small" placeholder="Użyj..." id="use-qty-${p.id}" style="width: 60px;">
+                <button class="btn-use" onclick="useProduct(${p.id})">Zużyj</button>
+                <div class="separator">|</div>
                 <input type="date" class="date-input" value="${p.expiry_date || ''}" 
                        onchange="markModified(${p.id})">
                 <label class="frozen-toggle">
@@ -228,6 +234,40 @@ async function deleteProduct(id) {
     }
 }
 
+// --- Usage Tracking ---
+async function useProduct(id) {
+    const input = document.getElementById(`use-qty-${id}`);
+    const amount = parseFloat(input.value);
+
+    if (!amount || amount <= 0) {
+        alert('Podaj ilość do zużycia!');
+        return;
+    }
+
+    if (!confirm(`Zużyć ${amount} jednostek produktu?`)) return;
+
+    try {
+        const res = await fetch(`${API_URL}/products/${id}/usage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount: amount })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            alert(`Zużyto! Nowa ilość: ${data.new_quantity}`);
+            // Refresh
+            closeModal();
+            loadProducts();
+        } else {
+            alert('Błąd aktualizacji');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Błąd sieci');
+    }
+}
+
 // --- AI Suggestions ---
 async function getSuggestion(type) {
     const resultDiv = document.getElementById('aiResult');
@@ -244,12 +284,38 @@ async function getSuggestion(type) {
         const res = await fetch(`${API_URL}/${endpoint}`, { method: 'POST' });
         const data = await res.json();
 
-        // Simple markdown to HTML conversion (very basic)
-        let formatted = data.suggestion
-            .replace(/\n/g, '<br>')
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        if (data.is_json && typeof data.suggestion === 'object') {
+            const s = data.suggestion;
+            let html = '';
 
-        textDiv.innerHTML = formatted;
+            if (s.meal_name) {
+                // Meal Suggestion
+                html += `<h4>🥘 ${s.meal_name}</h4>`;
+                if (s.ingredients) {
+                    html += `<h5>Składniki:</h5><ul>${s.ingredients.map(i => `<li>${i}</li>`).join('')}</ul>`;
+                }
+                if (s.steps) {
+                    html += `<h5>Przygotowanie:</h5><ol>${s.steps.map((step, i) => `<li>${step}</li>`).join('')}</ol>`;
+                }
+            } else if (Array.isArray(s)) {
+                // List (Shopping)
+                html += `<ul>${s.map(i => `<li>${i}</li>`).join('')}</ul>`;
+            } else {
+                // Fallback
+                html += `<pre>${JSON.stringify(s, null, 2)}</pre>`;
+            }
+            textDiv.innerHTML = html;
+        } else {
+            // Simple markdown to HTML conversion
+            let content = typeof data.suggestion === 'string' ? data.suggestion : JSON.stringify(data.suggestion);
+            let formatted = content
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/### (.*?)(<br>|$)/g, '<h3>$1</h3>')
+                .replace(/- (.*?)(<br>|$)/g, '<li>$1</li>');
+
+            textDiv.innerHTML = formatted;
+        }
     } catch (e) {
         textDiv.innerHTML = '<p class="error">Błąd generowania sugestii. Sprawdź czy Ollama działa.</p>';
     }
@@ -382,6 +448,103 @@ async function saveSettings() {
     } catch (e) {
         alert('Błąd zapisu ustawień');
     }
+
+    // Save Preferences
+    const prefData = {
+        diet_type: document.getElementById('dietType').value,
+        allergen: document.getElementById('allergens').value,
+        disliked_products: document.getElementById('disliked').value,
+        liked_products: document.getElementById('liked').value
+    };
+
+    try {
+        await fetch(`${API_URL}/preferences`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prefData)
+        });
+    } catch (e) {
+        console.error("Error saving preferences", e);
+    }
+}
+
+async function loadPreferences() {
+    try {
+        const res = await fetch(`${API_URL}/preferences`);
+        const data = await res.json();
+
+        if (data) {
+            document.getElementById('dietType').value = data.diet_type || '';
+            document.getElementById('allergens').value = data.allergen || '';
+            document.getElementById('disliked').value = data.disliked_products || '';
+            document.getElementById('liked').value = data.liked_products || '';
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+// --- Statistics ---
+let charts = {};
+
+async function loadStatistics() {
+    try {
+        const res = await fetch(`${API_URL}/statistics`);
+        const data = await res.json();
+
+        // Update summary cards
+        document.getElementById('totalSpend').textContent = (data.total_spend || 0).toFixed(2) + ' PLN';
+        document.getElementById('totalItems').textContent = data.total_items;
+        document.getElementById('itemsRatio').textContent = `${data.available_items} / ${(data.total_items - data.available_items)}`;
+
+        renderCharts(data);
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function renderCharts(data) {
+    // Categories Chart
+    const ctxCat = document.getElementById('categoriesChart').getContext('2d');
+
+    if (charts.categories) charts.categories.destroy();
+
+    charts.categories = new Chart(ctxCat, {
+        type: 'doughnut',
+        data: {
+            labels: data.top_categories.map(c => c.name),
+            datasets: [{
+                data: data.top_categories.map(c => c.count),
+                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF']
+            }]
+        }
+    });
+
+    // Trends Chart (Monthly Spend)
+    const ctxTrend = document.getElementById('trendsChart').getContext('2d');
+
+    if (charts.trends) charts.trends.destroy();
+
+    charts.trends = new Chart(ctxTrend, {
+        type: 'bar',
+        data: {
+            labels: data.monthly_spend.map(m => m.month),
+            datasets: [{
+                label: 'Wydatki (PLN)',
+                data: data.monthly_spend.map(m => m.total),
+                backgroundColor: '#36A2EB'
+            }]
+        },
+        options: {
+            scales: {
+                y: { beginAtZero: true }
+            }
+        }
+    });
+}
+
+function exportReport() {
+    window.print();
 }
 
 // Init

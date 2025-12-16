@@ -7,6 +7,7 @@
     <title>Meal Planner AI</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -17,6 +18,7 @@
                 <button class="tab-btn active" onclick="openTab('products')">Produkty</button>
                 <button class="tab-btn" onclick="openTab('suggestions')">Sugestie AI</button>
                 <button class="tab-btn" onclick="openTab('shopping')">Lista Zakupów</button>
+                <button class="tab-btn" onclick="openTab('statistics')">Statystyki</button>
                 <button class="tab-btn" onclick="openTab('settings')">Ustawienia</button>
             </nav>
         </header>
@@ -104,6 +106,36 @@
                 <!-- Placeholder for future implementation -->
             </section>
 
+            <!-- SECTION: STATYSTYKI -->
+            <section id="statistics" class="tab-content">
+                <h2>Statystyki Wydatków i Diety 📊</h2>
+                <div class="stats-overview">
+                    <div class="stat-card">
+                        <h3>Całkowite Wydatki</h3>
+                        <p id="totalSpend" class="stat-value">0.00 PLN</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Liczba Produktów</h3>
+                        <p id="totalItems" class="stat-value">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Dostępne / Zużyte</h3>
+                        <p id="itemsRatio" class="stat-value">0 / 0</p>
+                    </div>
+                </div>
+
+                <div class="charts-container">
+                    <div class="chart-wrapper">
+                        <h3>Top Kategorie</h3>
+                        <canvas id="categoriesChart"></canvas>
+                    </div>
+                    <div class="chart-wrapper">
+                        <h3>Wydatki (Ostatnie 6 miesięcy)</h3>
+                        <canvas id="trendsChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
             <!-- SECTION: USTAWIENIA -->
             <section id="settings" class="tab-content">
                 <h2>Ustawienia Aplikacji ⚙️</h2>
@@ -138,6 +170,36 @@
                         </form>
                     </div>
 
+                    <!-- User Preferences -->
+                    <div class="settings-card">
+                        <h3>👤 Preferencje Żywieniowe</h3>
+                        <form id="prefForm">
+                            <div class="form-group">
+                                <label>Typ Diety:</label>
+                                <select id="dietType">
+                                    <option value="">Brak</option>
+                                    <option value="wegetariańska">Wegetariańska</option>
+                                    <option value="wegańska">Wegańska</option>
+                                    <option value="bezglutenowa">Bezglutenowa</option>
+                                    <option value="keto">Keto</option>
+                                    <option value="low-carb">Low Carb</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Alergeny (oddziel przecinkami):</label>
+                                <input type="text" id="allergens" placeholder="np. orzechy, laktoza">
+                            </div>
+                            <div class="form-group">
+                                <label>Nie lubię (oddziel przecinkami):</label>
+                                <textarea id="disliked" rows="2" placeholder="np. brukselka, wątróbka"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Lubię (oddziel przecinkami):</label>
+                                <textarea id="liked" rows="2" placeholder="np. pizza, sushi"></textarea>
+                            </div>
+                        </form>
+                    </div>
+
                     <!-- Ollama Settings -->
                     <div class="settings-card">
                         <h3>🤖 Ollama (AI)</h3>
@@ -163,7 +225,8 @@
                 </div>
 
                 <div class="save-actions">
-                    <button class="btn-primary" onclick="saveSettings()">💾 Zapisz Ustawienia</button>
+                    <button class="btn-primary" onclick="saveSettings()">💾 Zapisz Ustawienia & Preferencje</button>
+                    <button class="btn-secondary" onclick="exportReport()">📄 Eksportuj Raport</button>
                 </div>
             </section>
         </main>

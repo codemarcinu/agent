@@ -4,6 +4,7 @@ import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -35,8 +36,10 @@ class Product(db.Model):
     shop = db.Column('sklep', db.String(100))
     purchase_date = db.Column('data_zakupow', db.Date)
     
-    # Virtual field for unit (defaults to 'szt' as it's missing in DB)
-    unit = 'szt'
+    shop = db.Column('sklep', db.String(100))
+    purchase_date = db.Column('data_zakupow', db.Date)
+    unit = db.Column('unit', db.String(20), default='szt')
+    created_at = db.Column('created_at', db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
@@ -83,6 +86,61 @@ class ShoppingList(db.Model):
             'items': self.items,
             'created_at': self.created_at.isoformat(),
             'completed': self.completed
+        }
+
+class UserPreference(db.Model):
+    __tablename__ = 'user_preferences'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, default=1) # Single user mode for now
+    allergen = db.Column(db.String(100))
+    diet_type = db.Column(db.String(50))
+    disliked_products = db.Column(db.Text)
+    liked_products = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'allergen': self.allergen,
+            'diet_type': self.diet_type,
+            'disliked_products': self.disliked_products,
+            'liked_products': self.liked_products
+        }
+
+class PurchaseHistory(db.Model):
+    __tablename__ = 'purchase_history'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.BigInteger)
+    purchase_date = db.Column(db.Date)
+    quantity = db.Column(db.Numeric)
+    price = db.Column(db.Numeric)
+    shop = db.Column(db.String(100))
+    category = db.Column(db.String(100))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'purchase_date': self.purchase_date.isoformat() if self.purchase_date else None,
+            'quantity': float(self.quantity) if self.quantity else 0,
+            'price': float(self.price) if self.price else 0,
+            'shop': self.shop,
+            'category': self.category
+        }
+
+class ProductUsage(db.Model):
+    __tablename__ = 'product_usage'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.BigInteger)
+    used_date = db.Column(db.Date)
+    used_amount = db.Column(db.Numeric)
+    meal_id = db.Column(db.Integer, nullable=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'product_id': self.product_id,
+            'used_date': self.used_date.isoformat(),
+            'used_amount': float(self.used_amount) if self.used_amount else 0
         }
 
 # --- Helper Functions ---
@@ -266,79 +324,235 @@ def delete_product(id):
     db.session.commit()
     return jsonify({'result': 'Product deleted'})
 
+
 # --- AI Suggestion Routes ---
 
-def call_ollama(prompt):
+def call_ollama_safe(prompt, expect_json=False):
     host = os.getenv('OLLAMA_HOST')
     model = os.getenv('OLLAMA_MODEL')
+    
+    system_prompt = "Jesteś pomocnym asystentem kulinarnym. Odpowiadaj krótko i konkretnie."
+    if expect_json:
+        system_prompt += " Odpowiedz TYLKO poprawnym formatem JSON. Nie dodawaj markdown."
+
     payload = {
         "model": model,
         "prompt": prompt,
-        "stream": False
+        "system": system_prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.3 if expect_json else 0.7
+        }
     }
+    
     try:
-        # Increased timeout to 120 seconds
-        response = requests.post(f"{host}/api/generate", json=payload, timeout=120)
+        # Increased timeout to 60 seconds
+        response = requests.post(f"{host}/api/generate", json=payload, timeout=60)
         if response.status_code == 200:
-            return response.json().get('response', '')
+            text = response.json().get('response', '')
+            if expect_json:
+                try:
+                    # Clean markdown code blocks if present
+                    clean_text = text.replace('```json', '').replace('```', '').strip()
+                    return json.loads(clean_text)
+                except json.JSONDecodeError:
+                    # Try to find JSON in text if it has markdown hints
+                    start = text.find('{')
+                    end = text.rfind('}') + 1
+                    if start != -1 and end != -1:
+                        json_str = text[start:end]
+                        try:
+                            return json.loads(json_str)
+                        except:
+                            pass
+                    print(f"Failed to parse JSON: {text}")
+                    return None
+            return text
         else:
-            return f"Error: {response.status_code} - {response.text}"
+            print(f"Ollama error: {response.text}")
+            return None
     except Exception as e:
-        return f"Error: {str(e)}"
+        print(f"Ollama exception: {str(e)}")
+        return None
 
 @app.route('/api/suggest-meal', methods=['POST'])
 def suggest_meal():
-    products = Product.query.all()
+    products = Product.query.filter_by(available='TAK').all()
+    # Get user preferences
+    prefs = UserPreference.query.filter_by(user_id=1).first()
+    
     product_list = ", ".join([f"{p.name} ({p.quantity} {p.unit})" for p in products])
     
+    pref_text = ""
+    if prefs:
+        if prefs.diet_type: pref_text += f"\nDieta: {prefs.diet_type}."
+        if prefs.allergen: pref_text += f"\nUnikaj alergenów: {prefs.allergen}."
+        if prefs.disliked_products: pref_text += f"\nNie lubię: {prefs.disliked_products}."
+
     prompt = f"""
-    Mam dostępne produkty: [{product_list}]. 
+    Mam dostępne produkty: [{product_list}].
+    {pref_text} 
     Zasugeruj mi jeden prosty, smaczny posiłek, który mogę dzisiaj przygotować.
-    Podaj nazwę posiłku, składniki i instrukcje przygotowania w 3-4 krokach.
-    Odpowiedz w języku polskim.
+    Podaj nazwę posiłku, składniki (z ilościami) i instrukcje przygotowania w krokach.
+    Format JSON:
+    {{
+        "meal_name": "Nazwa",
+        "ingredients": ["item 1", "item 2"],
+        "steps": ["step 1", "step 2"]
+    }}
     """
     
-    suggestion = call_ollama(prompt)
-    return jsonify({'suggestion': suggestion})
+    suggestion = call_ollama_safe(prompt, expect_json=True)
+    
+    # Fallback to plain text if JSON fails or manual construction
+    if not suggestion:
+        # Retry with simpler prompt or just return error/text
+        return jsonify({'suggestion': "Nie udało się wygenerować sugestii. Spróbuj ponownie."})
+        
+    # Format for frontend (which expects HTML/Markdown currently, but we can send structured)
+    # The frontend expects 'suggestion' string with HTML/Markdown.
+    # Let's convert JSON back to nice HTML for now to keep frontend compatible, 
+    # or update frontend to handle JSON. Implementation Plan said "Update backend...". 
+    # Let's return JSON and update Frontend to handle it.
+    
+    return jsonify({'suggestion': suggestion, 'is_json': True})
 
 @app.route('/api/suggest-weekly-menu', methods=['POST'])
 def suggest_weekly_menu():
-    products = Product.query.all()
+    products = Product.query.filter_by(available='TAK').all()
     product_list = ", ".join([f"{p.name} ({p.quantity} {p.unit})" for p in products])
     
     prompt = f"""
     Mam dostępne produkty: [{product_list}]. 
-    Zaproponuj mi jadłospis na 7 dni, wykorzystując dostępne produkty.
-    Dla każdego dnia podaj: śniadanie, obiad i kolację.
-    Odpowiedz w języku polskim.
+    Zaproponuj mi jadłospis na 7 dni.
+    Dla każdego dnia (Dzień 1...7) podaj: śniadanie, obiad i kolację.
+    Odpowiedz w formacie Markdown.
     """
     
-    suggestion = call_ollama(prompt)
-    return jsonify({'suggestion': suggestion})
+    suggestion = call_ollama_safe(prompt, expect_json=False)
+    return jsonify({'suggestion': suggestion, 'is_json': False})
 
 @app.route('/api/suggest-shopping-list', methods=['POST'])
 def suggest_shopping_list():
-    products = Product.query.all()
+    products = Product.query.filter_by(available='TAK').all()
     product_list = ", ".join([f"{p.name} ({p.quantity} {p.unit})" for p in products])
     
     prompt = f"""
     Mam produkty: [{product_list}]. 
-    Jakie dodatki i produkty powinieneś kupić dla bogatszej i bardziej zróżnicowanej diety?
-    Podaj konkretną listę 15-20 produktów do kupienia z ilościami.
-    Odpowiedz w języku polskim.
+    Jakie dodatki i produkty powinieneś kupić dla bogatszej diety?
+    Wymień 15-20 produktów.
+    Format JSON: ["produkt 1", "produkt 2", ...]
     """
     
-    suggestion = call_ollama(prompt)
-    return jsonify({'suggestion': suggestion})
+    suggestion = call_ollama_safe(prompt, expect_json=True)
+    if not suggestion:
+        suggestion = "Błąd generowania."
+    
+    return jsonify({'suggestion': suggestion, 'is_json': True})
 
-# --- Init DB ---
-with app.app_context():
-    # Attempt to create tables if connection is successful
+# --- Statistics & Data Routes ---
+
+@app.route('/api/products/all', methods=['GET'])
+def get_all_products():
+    """Return all products including history (unavailable ones)"""
+    products = Product.query.order_by(Product.purchase_date.desc()).all()
+    return jsonify([p.to_dict() for p in products])
+
+@app.route('/api/statistics', methods=['GET'])
+def get_statistics():
     try:
-        # db.create_all() # Schema exists externally
-        print("Database connection ready.")
+        # Total spend query (sum of price * quantity for all entries)
+        # Note: price is per unit usually.
+        # Use SQL for efficiency
+        
+        # 1. Total Spend (All time)
+        total_spend = db.session.query(func.sum(Product.price * Product.quantity)).scalar() or 0
+        
+        # 2. Total Products Count
+        total_count = Product.query.count()
+        
+        # 3. Available vs Used
+        available_count = Product.query.filter_by(available='TAK').count()
+        
+        # 4. Top Categories
+        top_cats = db.session.query(
+            Product.category, func.count(Product.id)
+        ).group_by(Product.category).order_by(func.count(Product.id).desc()).limit(5).all()
+        
+        categories_data = [{'name': c[0], 'count': c[1]} for c in top_cats]
+        
+        # 5. Monthly Spend (Last 6 months) - Requires parsing purchase_date
+        # Simple implementation: group by year-month
+        # PostgreSQL specific: to_char
+        monthly_spend = db.session.query(
+            func.to_char(Product.purchase_date, 'YYYY-MM'),
+            func.sum(Product.price * Product.quantity)
+        ).group_by(func.to_char(Product.purchase_date, 'YYYY-MM'))\
+         .order_by(func.to_char(Product.purchase_date, 'YYYY-MM').desc())\
+         .limit(6).all()
+         
+        monthly_data = [{'month': m[0], 'total': float(m[1]) if m[1] else 0} for m in monthly_spend]
+
+        return jsonify({
+            'total_spend': float(total_spend),
+            'total_items': total_count,
+            'available_items': available_count,
+            'top_categories': categories_data,
+            'monthly_spend': monthly_data
+        })
     except Exception as e:
-        print(f"Failed to initialize database: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/preferences', methods=['GET', 'POST'])
+def handle_preferences():
+    if request.method == 'POST':
+        data = request.json
+        pref = UserPreference.query.filter_by(user_id=1).first()
+        if not pref:
+            pref = UserPreference(user_id=1)
+            db.session.add(pref)
+        
+        pref.allergen = data.get('allergen')
+        pref.diet_type = data.get('diet_type')
+        pref.disliked_products = data.get('disliked_products')
+        pref.liked_products = data.get('liked_products')
+        
+        db.session.commit()
+        return jsonify(pref.to_dict())
+    else:
+        pref = UserPreference.query.filter_by(user_id=1).first()
+        if pref:
+            return jsonify(pref.to_dict())
+        return jsonify({})
+
+@app.route('/api/products/<int:id>/usage', methods=['POST'])
+def track_usage(id):
+    product = Product.query.get_or_404(id)
+    data = request.json
+    amount = float(data.get('amount', 0))
+    
+    if amount > 0:
+        # Create usage record
+        usage = ProductUsage(
+            product_id=product.id,
+            used_date=datetime.now().date(),
+            used_amount=amount
+        )
+        db.session.add(usage)
+        
+        # Update product
+        current_qty = float(product.quantity)
+        new_qty = max(0, current_qty - amount)
+        product.quantity = new_qty
+        
+        if new_qty == 0:
+            product.available = 'NIE'
+            
+        db.session.commit()
+        return jsonify({'status': 'OK', 'new_quantity': new_qty})
+    
+    return jsonify({'error': 'Invalid amount'}), 400
 
 if __name__ == '__main__':
+
     app.run(debug=True, host='0.0.0.0', port=5000)
